@@ -1,0 +1,113 @@
+---
+- name: Deploy Next.js SSR App
+  hosts: webservers
+  become: yes # Run as root for system packages
+
+  tasks:
+    # ---------------------------------------------------
+    # 1. SYSTEM SETUP (Runs as Root)
+    # ---------------------------------------------------
+    - name: Install System Packages (Node, NPM, Nginx)
+      apt:
+        name:
+          - nodejs
+          - npm
+          - nginx # <--- Added Nginx here
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Install PM2 globally
+      community.general.npm:
+        name: pm2
+        global: yes
+        state: present
+
+    - name: Create app directory
+      file:
+        path: /var/www/my-next-app
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    # ---------------------------------------------------
+    # 2. FILE TRANSFER (Preserve 'ubuntu' ownership)
+    # ---------------------------------------------------
+    - name: Clean old build folder
+      file:
+        path: /var/www/my-next-app/.next
+        state: absent
+
+    - name: Copy .next folder
+      copy:
+        src: ./.next
+        dest: /var/www/my-next-app/
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Copy public folder
+      copy:
+        src: ./public
+        dest: /var/www/my-next-app/
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Copy package.json
+      copy:
+        src: ./package.json
+        dest: /var/www/my-next-app/
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    # ---------------------------------------------------
+    # 3. APP STARTUP (Runs as 'ubuntu' User)
+    # ---------------------------------------------------
+    - name: Install Dependencies
+      become_user: ubuntu
+      command: npm install --production
+      args:
+        chdir: /var/www/my-next-app
+      # Note: NPM is smart. If no packages changed, this finishes instantly.
+
+    - name: Start/Restart App with PM2
+      become_user: ubuntu
+      command: pm2 start npm --name "nextjs-app" -- start
+      args:
+        chdir: /var/www/my-next-app
+      ignore_errors: yes # Ignores error if app is already running
+
+    - name: Reload PM2
+      become_user: ubuntu
+      command: pm2 reload nextjs-app
+      args:
+        chdir: /var/www/my-next-app
+
+    # ---------------------------------------------------
+    # 4. NGINX CONFIG (Runs as Root)
+    # ---------------------------------------------------
+    - name: Update Nginx Config
+      copy:
+        dest: /etc/nginx/sites-available/default
+        content: |
+          server {
+              listen 80;
+              server_name _;
+              
+              location / {
+                  proxy_pass http://localhost:3000;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_cache_bypass $http_upgrade;
+              }
+          }
+      notify: Restart Nginx
+
+  handlers:
+    - name: Restart Nginx
+      service: name=nginx state=restarted
