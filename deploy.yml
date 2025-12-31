@@ -11,7 +11,7 @@
       apt:
         name:
           - nodejs
-          - npm
+
           - nginx # <--- Added Nginx here
           - git
         state: present
