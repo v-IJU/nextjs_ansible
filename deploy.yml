@@ -1,21 +1,29 @@
 ---
 - name: Deploy Next.js SSR App
   hosts: webservers
-  become: yes # Run as root for system packages
+  become: yes
 
   tasks:
     # ---------------------------------------------------
-    # 1. SYSTEM SETUP (Runs as Root)
+    # 2. SYSTEM SETUP (Node 20 + Nginx)
     # ---------------------------------------------------
-    - name: Install System Packages (Node, NPM, Nginx)
+    - name: Install Prerequisites
       apt:
-        name:
-          - nodejs
-
-          - nginx # <--- Added Nginx here
-          - git
+        name: [curl, ca-certificates, gnupg, git, nginx]
         state: present
         update_cache: yes
+
+    - name: Add NodeSource v20 Repo
+      shell: curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Install Node.js (Contains NPM automatically)
+      apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+      # NOTE: We DO NOT list 'npm' here to avoid conflicts!
 
     - name: Install PM2 globally
       community.general.npm:
@@ -23,6 +31,9 @@
         global: yes
         state: present
 
+    # ---------------------------------------------------
+    # 3. APP SETUP
+    # ---------------------------------------------------
     - name: Create app directory
       file:
         path: /var/www/my-next-app
@@ -31,10 +42,7 @@
         group: ubuntu
         mode: "0755"
 
-    # ---------------------------------------------------
-    # 2. FILE TRANSFER (Preserve 'ubuntu' ownership)
-    # ---------------------------------------------------
-    - name: Clean old build folder
+    - name: Clean old .next folder
       file:
         path: /var/www/my-next-app/.next
         state: absent
@@ -64,21 +72,20 @@
         mode: "0644"
 
     # ---------------------------------------------------
-    # 3. APP STARTUP (Runs as 'ubuntu' User)
+    # 4. APP STARTUP (Runs as 'ubuntu' user)
     # ---------------------------------------------------
-    - name: Install Dependencies
+    - name: Install Production Dependencies
       become_user: ubuntu
       command: npm install --production
       args:
         chdir: /var/www/my-next-app
-      # Note: NPM is smart. If no packages changed, this finishes instantly.
 
     - name: Start/Restart App with PM2
       become_user: ubuntu
       command: pm2 start npm --name "nextjs-app" -- start
       args:
         chdir: /var/www/my-next-app
-      ignore_errors: yes # Ignores error if app is already running
+      ignore_errors: yes
 
     - name: Reload PM2
       become_user: ubuntu
@@ -87,7 +94,7 @@
         chdir: /var/www/my-next-app
 
     # ---------------------------------------------------
-    # 4. NGINX CONFIG (Runs as Root)
+    # 5. NGINX CONFIG
     # ---------------------------------------------------
     - name: Update Nginx Config
       copy:
