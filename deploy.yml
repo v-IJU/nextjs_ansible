@@ -41,6 +41,7 @@
         owner: ubuntu
         group: ubuntu
         mode: "0755"
+        recurse: yes
 
     - name: Clean old .next folder
       file:
